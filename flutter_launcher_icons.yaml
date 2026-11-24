@@ -1,0 +1,8 @@
+  @"
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/app_icon.png"
+  adaptive_icon_background: "#020921"
+  adaptive_icon_foreground: "assets/app_icon.png"
+    "@ | Set-Content -Path "flutter_launcher_icons.yaml" -Encoding UTF8

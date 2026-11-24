@@ -34,8 +34,8 @@ class AiTutorRepository {
         : preferredLanguage;
 
     final prompt = AppStrings.buildExplainPrompt(detectedLang, userText);
-    final dynamic parts = [
-    {'text': prompt}
+    final List parts = [
+      {'text': prompt}
     ];
     String? uploadedFileUrl;
 

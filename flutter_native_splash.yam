@@ -1,0 +1,13 @@
+@"
+flutter_native_splash:
+  color: "#020921"
+  image: assets/app_icon.png
+  android: true
+  ios: true
+  android_gravity: center
+  ios_content_mode: center
+  fullscreen: false
+  android_12:
+    image: assets/app_icon.png
+    color: "#020921"
+"@ | Set-Content -Path "flutter_native_splash.yaml" -Encoding UTF8
