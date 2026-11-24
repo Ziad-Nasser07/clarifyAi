@@ -3,6 +3,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter_native_splash/flutter_native_splash.dart'; // <-- 1. أضف هذا السطر هنا
 import 'core/network/dio_client.dart';
 import 'core/theme/app_theme.dart';
 import 'features/ai_tutor/data/ai_tutor_repository.dart';
@@ -18,13 +19,18 @@ import 'features/smart_research/logic/research_cubit.dart';
 import 'firebase_options.dart';
 
 void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await dotenv.load(fileName: ".env");
+
+  WidgetsBinding widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
+  FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
+
+  await dotenv.load(fileName: "assets/app.env");
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
   final dioClient = DioClient();
+
+  FlutterNativeSplash.remove();
 
   runApp(ClarifyAiApp(dioClient: dioClient));
 }

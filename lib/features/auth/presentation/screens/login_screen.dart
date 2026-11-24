@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+
 import '../../../../core/theme/app_theme.dart';
 import '../../logic/auth_cubit.dart';
 import '../../../libraries/presentation/screens/home_libraries_screen.dart';
@@ -29,7 +30,10 @@ class _LoginScreenState extends State<LoginScreen> {
             );
           } else if (state is AuthFailure) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(state.message), backgroundColor: Colors.redAccent),
+              SnackBar(
+                content: Text(state.message),
+                backgroundColor: Colors.redAccent,
+              ),
             );
           }
         },
@@ -56,7 +60,11 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                         ],
                       ),
-                      child: const Icon(Icons.auto_awesome, size: 44, color: Colors.white),
+                      child: const Icon(
+                        Icons.auto_awesome,
+                        size: 44,
+                        color: Colors.white,
+                      ),
                     ),
                     const SizedBox(height: 20),
                     Text(
@@ -67,7 +75,10 @@ class _LoginScreenState extends State<LoginScreen> {
                     const Text(
                       'Your Intelligent Academic Tutor & Cited Research Hub',
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: AppTheme.textSecondary, fontSize: 14),
+                      style: TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 14,
+                      ),
                     ),
                     const SizedBox(height: 32),
                     Container(
@@ -113,26 +124,45 @@ class _LoginScreenState extends State<LoginScreen> {
                               onPressed: state is AuthLoading
                                   ? null
                                   : () {
-                                if (_isRegister) {
-                                  context.read<AuthCubit>().register(
-                                    _nameController.text,
-                                    _emailController.text,
-                                    _passwordController.text,
-                                  );
-                                } else {
-                                  context.read<AuthCubit>().login(
-                                    _emailController.text,
-                                    _passwordController.text,
-                                  );
-                                }
-                              },
+                                      if (_isRegister) {
+                                        context.read<AuthCubit>().register(
+                                          _nameController.text,
+                                          _emailController.text,
+                                          _passwordController.text,
+                                        );
+                                        Future.delayed(
+                                          Duration(seconds: 4),
+                                          () {
+                                            Navigator.pushReplacement(
+                                              context,
+                                              MaterialPageRoute(
+                                                builder: (context) =>
+                                                    HomeLibrariesScreen(),
+                                              ),
+                                            );
+                                          },
+                                        );
+                                      } else {
+                                        context.read<AuthCubit>().login(
+                                          _emailController.text,
+                                          _passwordController.text,
+                                        );
+                                      }
+                                    },
                               child: state is AuthLoading
                                   ? const SizedBox(
-                                height: 22,
-                                width: 22,
-                                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
-                              )
-                                  : Text(_isRegister ? 'Create Account' : 'Sign In'),
+                                      height: 22,
+                                      width: 22,
+                                      child: CircularProgressIndicator(
+                                        color: Colors.white,
+                                        strokeWidth: 2.5,
+                                      ),
+                                    )
+                                  : Text(
+                                      _isRegister
+                                          ? 'Create Account'
+                                          : 'Sign In',
+                                    ),
                             ),
                           ),
                         ],
@@ -140,7 +170,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 16),
                     TextButton(
-                      onPressed: () => setState(() => _isRegister = !_isRegister),
+                      onPressed: () =>
+                          setState(() => _isRegister = !_isRegister),
                       child: Text(
                         _isRegister
                             ? 'Already have an account? Sign In'

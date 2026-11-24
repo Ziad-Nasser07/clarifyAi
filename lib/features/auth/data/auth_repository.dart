@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+
 import '../../../../core/constants/api_constants.dart';
 
 class AuthRepository {
@@ -30,12 +31,15 @@ class AuthRepository {
     final user = credential.user;
     if (user != null) {
       await user.updateDisplayName(name.trim());
-      await _firestore.collection(ApiConstants.usersCollection).doc(user.uid).set({
-        'name': name.trim(),
-        'email': email.trim(),
-        'preferredLanguage': preferredLanguage,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
+      await _firestore
+          .collection(ApiConstants.usersCollection)
+          .doc(user.uid)
+          .set({
+            'name': name.trim(),
+            'email': email.trim(),
+            'preferredLanguage': preferredLanguage,
+            'createdAt': FieldValue.serverTimestamp(),
+          });
     }
     return user;
   }
