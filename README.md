@@ -1,3 +1,34 @@
+## 📱 Screenshots
+
+<table>
+  <tr>
+    <td align="center"><b>1. Login Screen</b></td>
+    <td align="center"><b>2. Register Screen</b></td>
+    <td align="center"><b>3. Home Page</b></td>
+    <td align="center"><b>4. Home Page (Features)</b></td>
+  </tr>
+  <tr>
+    <td><img src="screenshots/LogIn.png" width="200"/></td>
+    <td><img src="screenshots/Regester.png" width="200"/></td>
+    <td><img src="screenshots/HomePage.png" width="200"/></td>
+    <td><img src="screenshots/HomePage2.png" width="200"/></td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td align="center"><b>5. AI Tutor & Explanation</b></td>
+    <td align="center"><b>6. Smart Research</b></td>
+    <td align="center"><b>7. Subject Libraries</b></td>
+  </tr>
+  <tr>
+    <td><img src="screenshots/Explain.png" width="200"/></td>
+    <td><img src="screenshots/Reserch.png" width="200"/></td>
+    <td><img src="screenshots/Library.png" width="200"/></td>
+  </tr>
+</table>
+
+
 <div align="center">
   <img src="assets/app_icon.png" alt="ClarifyAI Logo" width="120" height="120" />
   <h1>ClarifyAI</h1>
