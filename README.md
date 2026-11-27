@@ -105,7 +105,7 @@ lib/
 
 ### Prerequisites
 * **Flutter SDK** (`>= 3.0.0`)
-* **Dart SDK** (`>= 3.0.0`)
+* **Dart SDK** matching the `environment.sdk` constraint in `pubspec.yaml` (3.14 or newer)
 * A configured **Firebase Project** (with Email/Password Auth, Firestore, and Storage enabled)
 * API keys for **Google Gemini**, **YouTube Data API v3**, and **Tavily**
 
@@ -126,10 +126,11 @@ lib/
    Create a file named `app.env` inside the `assets/` directory (`assets/app.env`) and add your API keys:
    ```env
    GEMINI_API_KEY=your_gemini_api_key_here
+   GROQ_API_KEY=your_groq_api_key_here
    YOUTUBE_API_KEY=your_youtube_data_api_key_here
    TAVILY_API_KEY=your_tavily_api_key_here
    ```
-   > **Note:** `assets/app.env` is excluded in `.gitignore` to keep your API keys secure.
+   > **Important:** `assets/app.env` is bundled into the Flutter application. Values placed there can be extracted from an APK; this file is only a development convenience and is not a secure production secret store. For production, proxy Gemini, Groq, Tavily, and YouTube requests through a trusted backend. The archive contains placeholders, not working keys.
 
 4. **Configure Firebase:**
    Run the FlutterFire CLI to link your Firebase project and generate `lib/firebase_options.dart`:

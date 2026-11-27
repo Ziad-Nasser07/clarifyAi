@@ -3,7 +3,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:flutter_native_splash/flutter_native_splash.dart'; // <-- 1. أضف هذا السطر هنا
+import 'package:flutter_native_splash/flutter_native_splash.dart';
 import 'core/network/dio_client.dart';
 import 'core/theme/app_theme.dart';
 import 'features/ai_tutor/data/ai_tutor_repository.dart';
@@ -23,16 +23,25 @@ void main() async {
   WidgetsBinding widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
   FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
 
-  await dotenv.load(fileName: "assets/app.env");
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  Object? startupError;
+  try {
+    await dotenv.load(fileName: 'assets/app.env');
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  } catch (error, stackTrace) {
+    startupError = error;
+    debugPrint('ClarifyAI startup failed: $error\n$stackTrace');
+  } finally {
+    FlutterNativeSplash.remove();
+  }
 
-  final dioClient = DioClient();
+  if (startupError != null) {
+    runApp(_StartupErrorApp(message: startupError.toString()));
+    return;
+  }
 
-  FlutterNativeSplash.remove();
-
-  runApp(ClarifyAiApp(dioClient: dioClient));
+  runApp(ClarifyAiApp(dioClient: DioClient()));
 }
 
 class ClarifyAiApp extends StatelessWidget {
@@ -56,6 +65,34 @@ class ClarifyAiApp extends StatelessWidget {
         home: FirebaseAuth.instance.currentUser != null
             ? const HomeLibrariesScreen()
             : const LoginScreen(),
+      ),
+    );
+  }
+}
+class _StartupErrorApp extends StatelessWidget {
+  final String message;
+  const _StartupErrorApp({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.error_outline, color: Colors.red, size: 48),
+                const SizedBox(height: 16),
+                const Text('تعذر تشغيل ClarifyAI', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Text(message, textAlign: TextAlign.center),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

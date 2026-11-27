@@ -23,6 +23,7 @@ class ResearchCubit extends Cubit<ResearchState> {
     required String libraryId,
     required String topic,
   }) async {
+    if (state is ResearchLoading) return;
     emit(ResearchLoading());
     try {
       final result = await _repository.performResearch(

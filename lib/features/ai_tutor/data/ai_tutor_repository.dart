@@ -1,128 +1,318 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:dio/dio.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+
 import '../../../core/constants/api_constants.dart';
 import '../../../core/constants/app_strings.dart';
 import '../../../core/utils/file_helper.dart';
-import '../../../core/utils/language_detector.dart';
 import 'models/explanation_session_model.dart';
 import 'models/youtube_video_model.dart';
 
 class AiTutorRepository {
   final Dio _dio;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final FirebaseStorage _storage = FirebaseStorage.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
+
+  // Keep the fallback list short and use current general-purpose multimodal models.
+  static const List<String> _geminiModels = [
+    'gemini-3.8-flash',
+    'gemini-3.5-flash-lite',
+  ];
 
   AiTutorRepository(this._dio);
 
-  Future<ExplanationSessionModel> explainContent({
+  String _serverError(DioException error) {
+    final data = error.response?.data;
+    if (data is ResponseBody) return 'تعذر قراءة تفاصيل رد الخادم';
+    if (data is Map) {
+      final errorObject = data['error'];
+      if (errorObject is Map) {
+        return errorObject['message']?.toString() ?? error.message ?? 'خطأ غير معروف';
+      }
+    }
+    if (data is String && data.isNotEmpty) return data;
+    return error.message ?? 'تعذر الاتصال بالخادم';
+  }
+
+  Stream<String> _readGroqStream({
+    required String prompt,
+    File? imageFile,
+    String? imageMimeType,
+    String? imageBase64,
+  }) async* {
+    final key = (dotenv.env['GROQ_API_KEY'] ?? '').trim();
+    if (key.isEmpty) throw Exception('مفتاح Groq غير مضبوط في assets/app.env');
+
+    final isVision = imageFile != null;
+    if (isVision && (imageMimeType == null || imageBase64 == null)) {
+      throw Exception('تعذر تجهيز الصورة لإرسالها إلى نموذج الرؤية.');
+    }
+
+    final messageContent = isVision
+        ? [
+            {'type': 'text', 'text': prompt},
+            {
+              'type': 'image_url',
+              'image_url': {'url': 'data:$imageMimeType;base64,$imageBase64'},
+            },
+          ]
+        : prompt;
+
+    final model = isVision ? ApiConstants.groqVisionModel : ApiConstants.groqTextModel;
+    debugPrint('ClarifyAI fallback provider: Groq ($model)');
+
+    try {
+      final response = await _dio.post(
+        ApiConstants.groqChatUrl,
+        options: Options(
+          responseType: ResponseType.stream,
+          sendTimeout: const Duration(seconds: 30),
+          receiveTimeout: const Duration(seconds: 120),
+          headers: {
+            'Authorization': 'Bearer $key',
+            'Content-Type': 'application/json',
+          },
+        ),
+        data: {
+          'model': model,
+          'stream': true,
+          'messages': [
+            {'role': 'user', 'content': messageContent},
+          ],
+        },
+      );
+
+      final stream = (response.data as ResponseBody).stream;
+      final lines = stream
+          .cast<List<int>>()
+          .transform(utf8.decoder)
+          .transform(const LineSplitter());
+      final buffer = StringBuffer();
+      await for (final line in lines) {
+        final trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) continue;
+        final payload = trimmed.substring(5).trim();
+        if (payload.isEmpty || payload == '[DONE]') continue;
+        try {
+          final decoded = jsonDecode(payload);
+          if (decoded is! Map<String, dynamic>) continue;
+          final choices = decoded['choices'] as List? ?? const [];
+          if (choices.isEmpty) continue;
+          final choice = choices.first;
+          if (choice is! Map) continue;
+          final delta = choice['delta'];
+          final content = delta is Map ? delta['content'] : null;
+          if (content is String && content.isNotEmpty) {
+            buffer.write(content);
+            yield buffer.toString();
+          }
+        } on FormatException catch (error) {
+          debugPrint('Skipping incomplete Groq SSE event: $error');
+        }
+      }
+      if (buffer.isEmpty) throw Exception('أعاد Groq استجابة فارغة.');
+    } on DioException catch (error) {
+      debugPrint('Groq request failed (${error.response?.statusCode}): ${_serverError(error)}');
+      throw Exception('فشل Groq (${error.response?.statusCode ?? 'اتصال'}): ${_serverError(error)}');
+    }
+  }
+
+  Stream<String> explainContentStream({
     required String libraryId,
     File? file,
     String? userText,
     String preferredLanguage = 'ar',
-  }) async {
-    final userId = _auth.currentUser!.uid;
-    final geminiKey = dotenv.env['GEMINI_API_KEY'] ?? '';
+    required void Function(ExplanationSessionModel savedSession) onCompleted,
+  }) async* {
+    final user = _auth.currentUser;
+    if (user == null) throw Exception('يرجى تسجيل الدخول أولاً لحفظ الجلسة.');
+    if ((userText == null || userText.trim().isEmpty) && file == null) {
+      throw Exception('أدخل نصًا أو اختر صورة أو ملف PDF أولاً.');
+    }
 
-    final detectedLang = (userText != null && userText.trim().isNotEmpty)
-        ? LanguageDetector.detectLanguage(userText)
-        : preferredLanguage;
+    // The language selected by the user is authoritative; text detection must not override it.
+    final language = preferredLanguage == 'ar' ? 'ar' : 'en';
+    final note = userText?.trim();
+    final prompt = AppStrings.buildExplainPrompt(language, note);
 
-    final prompt = AppStrings.buildExplainPrompt(detectedLang, userText);
-    final List parts = [
-      {'text': prompt}
-    ];
-    String? uploadedFileUrl;
-
+    String? mimeType;
+    String? base64Data;
     if (file != null) {
-    final bytes = await FileHelper.fileToBytes(file);
-    final mimeType = FileHelper.getMimeType(file.path);
-    final base64Data = base64Encode(bytes);
-
-    parts.add({
-    'inlineData': {
-    'mimeType': mimeType,
-    'data': base64Data,
-    }
-    });
-
-    final fileName = '${DateTime.now().millisecondsSinceEpoch}_${file.path.split('/').last}';
-    final ref = _storage.ref().child('users/$userId/libraries/$libraryId/$fileName');
-    await ref.putFile(file);
-    uploadedFileUrl = await ref.getDownloadURL();
+      mimeType = FileHelper.getMimeType(file.path);
+      final isPdf = mimeType == 'application/pdf';
+      if (!isPdf && !mimeType.startsWith('image/')) {
+        throw Exception('نوع الملف غير مدعوم. استخدم صورة أو ملف PDF.');
+      }
+      final bytes = await FileHelper.fileToBytes(file);
+      if (bytes.isEmpty) throw Exception('الملف المحدد فارغ.');
+      // Avoid sending very large payloads that are likely to be rejected or exhaust memory.
+      if (bytes.length > 18 * 1024 * 1024) {
+        throw Exception('حجم الملف أكبر من 18 MB. قلّل حجمه ثم حاول مرة أخرى.');
+      }
+      base64Data = base64Encode(bytes);
+      debugPrint('ClarifyAI attachment size: ${(bytes.length / 1024).toStringAsFixed(1)} KB');
     }
 
-    final response = await _dio.post(
-    ApiConstants.geminiVertexUrl,
-    queryParameters: {'key': geminiKey},
-    data: {
-    'contents': [
-    {
-    'role': 'user',
-    'parts': parts,
+    final geminiKey = (dotenv.env['GEMINI_API_KEY'] ?? '').trim();
+    final buffer = StringBuffer();
+    Object? geminiFailure;
+
+    if (geminiKey.isNotEmpty) {
+      for (final model in _geminiModels) {
+        try {
+          debugPrint('ClarifyAI trying Gemini model: $model');
+          final parts = <Map<String, dynamic>>[
+            {'text': prompt},
+          ];
+          if (base64Data != null && mimeType != null) {
+            parts.add({
+              'inlineData': {'mimeType': mimeType, 'data': base64Data},
+            });
+          }
+
+          final body = <String, dynamic>{
+            'contents': [
+              {'role': 'user', 'parts': parts},
+            ],
+          };
+          if (model.startsWith('gemini-3')) {
+            body['generationConfig'] = {
+              'thinkingConfig': {'thinkingLevel': 'LOW'},
+            };
+          }
+
+          final response = await _dio.post(
+            '${ApiConstants.geminiBaseUrl}/$model:streamGenerateContent?alt=sse',
+            options: Options(
+              responseType: ResponseType.stream,
+              sendTimeout: const Duration(seconds: 30),
+              receiveTimeout: const Duration(seconds: 120),
+              headers: {
+                'x-goog-api-key': geminiKey,
+                'Content-Type': 'application/json',
+              },
+            ),
+            data: body,
+          );
+
+          final stream = (response.data as ResponseBody).stream;
+          final lines = stream
+              .cast<List<int>>()
+              .transform(utf8.decoder)
+              .transform(const LineSplitter());
+          await for (final line in lines) {
+            final trimmed = line.trim();
+            if (!trimmed.startsWith('data:')) continue;
+            final payload = trimmed.substring(5).trim();
+            if (payload.isEmpty || payload == '[DONE]') continue;
+            try {
+              final decoded = jsonDecode(payload);
+              if (decoded is! Map<String, dynamic>) continue;
+              final candidates = decoded['candidates'] as List? ?? const [];
+              if (candidates.isEmpty || candidates.first is! Map) continue;
+              final content = candidates.first['content'];
+              final responseParts = content is Map ? content['parts'] as List? ?? const [] : const [];
+              for (final part in responseParts) {
+                if (part is Map && part['text'] is String) {
+                  buffer.write(part['text'] as String);
+                }
+              }
+              if (buffer.isNotEmpty) {
+                final fullText = buffer.toString();
+                final keywordIndex = fullText.lastIndexOf('KEYWORDS:');
+                yield keywordIndex >= 0 ? fullText.substring(0, keywordIndex).trim() : fullText;
+              }
+            } on FormatException catch (error) {
+              debugPrint('Skipping incomplete Gemini SSE event: $error');
+            }
+          }
+          if (buffer.isNotEmpty) break;
+          geminiFailure = Exception('أعاد Gemini استجابة فارغة.');
+        } catch (error) {
+          geminiFailure = error;
+          buffer.clear();
+          debugPrint('Gemini model $model failed: $error');
+        }
+      }
+    } else {
+      geminiFailure = Exception('مفتاح Gemini غير مضبوط.');
     }
-    ],
-    },
-    );
 
-    final candidates = response.data['candidates'] as List? ?? [];
-    final rawText = candidates.isNotEmpty
-    ? (candidates[0]['content']['parts'][0]['text']?.toString() ?? '')
-        : '';
-
-    String cleanExplanation = rawText;
-    var keywords = <String>[];
-
-    if (rawText.contains('KEYWORDS:')) {
-    final splitIndex = rawText.lastIndexOf('KEYWORDS:');
-    cleanExplanation = rawText.substring(0, splitIndex).trim();
-    final keywordsLine = rawText.substring(splitIndex + 9).trim();
-    keywords = keywordsLine
-        .split(RegExp(r'[,،]'))
-        .map((e) => e.trim())
-        .where((e) => e.isNotEmpty)
-        .toList();
+    if (buffer.isEmpty) {
+      final isImage = mimeType != null && mimeType.startsWith('image/');
+      if (mimeType == 'application/pdf') {
+        throw Exception('تعذرت معالجة ملف PDF عبر Gemini، ولا يدعم مسار Groq الاحتياطي ملفات PDF مباشرة. تحقق من مفتاح Gemini أو جرّب لاحقًا. التفاصيل: $geminiFailure');
+      }
+      await for (final groqText in _readGroqStream(
+        prompt: prompt,
+        imageFile: isImage ? file : null,
+        imageMimeType: isImage ? mimeType : null,
+        imageBase64: isImage ? base64Data : null,
+      )) {
+        buffer
+          ..clear()
+          ..write(groqText);
+        final keywordIndex = groqText.lastIndexOf('KEYWORDS:');
+        yield keywordIndex >= 0 ? groqText.substring(0, keywordIndex).trim() : groqText;
+      }
     }
 
-    final firstLine = cleanExplanation.split('\n').first.replaceAll('#', '').trim();
-    final sessionTitle = firstLine.length > 45 ? '${firstLine.substring(0, 45)}...' : firstLine;
+    final rawText = buffer.toString().trim();
+    if (rawText.isEmpty) throw Exception('لم يصل رد من Gemini أو Groq. تحقق من المفاتيح والاتصال ثم أعد المحاولة.');
 
+    var explanation = rawText;
+    final keywords = <String>[];
+    final keywordIndex = rawText.lastIndexOf('KEYWORDS:');
+    if (keywordIndex >= 0) {
+      explanation = rawText.substring(0, keywordIndex).trim();
+      keywords.addAll(
+        rawText.substring(keywordIndex + 'KEYWORDS:'.length)
+            .split(RegExp(r'[,،\n]'))
+            .map((value) => value.trim())
+            .where((value) => value.isNotEmpty)
+            .take(5),
+      );
+    }
+
+    final firstLine = explanation.split('\n').first.replaceAll('#', '').trim();
+    final title = firstLine.length > 55 ? '${firstLine.substring(0, 55)}…' : firstLine;
     final session = ExplanationSessionModel(
-    id: '',
-    type: 'explanation',
-    title: sessionTitle.isEmpty ? 'شرح محتوى علمي' : sessionTitle,
-    inputText: userText ?? 'محتوى مرفق (صورة / PDF)',
-    attachmentUrl: uploadedFileUrl,
-    aiResponse: cleanExplanation,
-    language: detectedLang,
-    keywords: keywords,
-    createdAt: DateTime.now(),
+      id: '',
+      type: 'explanation',
+      title: title.isEmpty ? 'شرح محتوى علمي' : title,
+      inputText: note?.isNotEmpty == true ? note! : (file == null ? '' : 'محتوى مرفق (صورة / PDF)'),
+      attachmentUrl: null,
+      aiResponse: explanation,
+      language: language,
+      keywords: keywords,
+      createdAt: DateTime.now(),
     );
 
     final docRef = await _firestore
         .collection(ApiConstants.usersCollection)
-        .doc(userId)
+        .doc(user.uid)
         .collection(ApiConstants.librariesCollection)
         .doc(libraryId)
         .collection(ApiConstants.sessionsCollection)
         .add(session.toMap());
 
-    return ExplanationSessionModel(
-    id: docRef.id,
-    type: session.type,
-    title: session.title,
-    inputText: session.inputText,
-    attachmentUrl: session.attachmentUrl,
-    aiResponse: session.aiResponse,
-    language: session.language,
-    keywords: session.keywords,
-    createdAt: session.createdAt,
-    );
+    onCompleted(ExplanationSessionModel(
+      id: docRef.id,
+      type: session.type,
+      title: session.title,
+      inputText: session.inputText,
+      attachmentUrl: session.attachmentUrl,
+      aiResponse: session.aiResponse,
+      language: session.language,
+      keywords: session.keywords,
+      createdAt: session.createdAt,
+    ));
   }
 
   Future<List<YoutubeVideoModel>> fetchSuggestedVideos({
@@ -131,39 +321,55 @@ class AiTutorRepository {
     required List<String> keywords,
     required String languageCode,
   }) async {
-    final youtubeKey = dotenv.env['YOUTUBE_API_KEY'] ?? '';
-    final searchQuery = keywords.isNotEmpty
-        ? '${keywords.join(' ')} ${languageCode == 'ar' ? 'شرح' : 'explained'}'
-        : 'scientific explanation';
+    final key = (dotenv.env['YOUTUBE_API_KEY'] ?? '').trim();
+    if (key.isEmpty) throw Exception('مفتاح YouTube API غير مضبوط في assets/app.env');
+    if (_auth.currentUser == null) throw Exception('انتهت جلسة الدخول. سجّل الدخول مجددًا.');
 
-    final response = await _dio.get(
-      ApiConstants.youtubeSearchEndpoint,
-      queryParameters: {
-        'part': 'snippet',
-        'q': searchQuery,
-        'type': 'video',
-        'maxResults': 3,
-        'relevanceLanguage': languageCode,
-        'order': 'relevance',
-        'key': youtubeKey,
-      },
-    );
+    final lang = languageCode == 'ar' ? 'ar' : 'en';
+    final terms = keywords.map((item) => item.trim()).where((item) => item.isNotEmpty).take(5).join(' ');
+    final query = terms.isEmpty ? (lang == 'ar' ? 'شرح علمي مبسط' : 'simple academic explanation') : '$terms ${lang == 'ar' ? 'شرح' : 'explained'}';
 
-    final items = response.data['items'] as List? ?? [];
-    final videos = items.map((item) => YoutubeVideoModel.fromYoutubeApi(item)).toList();
+    try {
+      final response = await _dio.get(
+        ApiConstants.youtubeSearchEndpoint,
+        queryParameters: {
+          'part': 'snippet',
+          'q': query,
+          'type': 'video',
+          'maxResults': 3,
+          'relevanceLanguage': lang,
+          'order': 'relevance',
+          'safeSearch': 'moderate',
+          'key': key,
+        },
+      );
+      final data = response.data;
+      if (data is! Map) throw Exception('استجابة YouTube غير مفهومة.');
+      final items = data['items'] as List? ?? const [];
+      final videos = items
+          .whereType<Map>()
+          .map((item) => YoutubeVideoModel.fromYoutubeApi(Map<String, dynamic>.from(item)))
+          .where((video) => video.videoId.isNotEmpty)
+          .take(3)
+          .toList();
 
-    final userId = _auth.currentUser!.uid;
-    await _firestore
-        .collection(ApiConstants.usersCollection)
-        .doc(userId)
-        .collection(ApiConstants.librariesCollection)
-        .doc(libraryId)
-        .collection(ApiConstants.sessionsCollection)
-        .doc(sessionId)
-        .update({
-      'youtubeVideos': videos.map((v) => v.toMap()).toList(),
-    });
-
-    return videos;
+      if (sessionId.isNotEmpty && videos.isNotEmpty) {
+        final userId = _auth.currentUser!.uid;
+        await _firestore
+            .collection(ApiConstants.usersCollection)
+            .doc(userId)
+            .collection(ApiConstants.librariesCollection)
+            .doc(libraryId)
+            .collection(ApiConstants.sessionsCollection)
+            .doc(sessionId)
+            .update({'youtubeVideos': videos.map((video) => video.toMap()).toList()});
+      }
+      if (videos.isEmpty) throw Exception('لم يعثر YouTube على فيديوهات مناسبة لهذه الكلمات.');
+      return videos;
+    } on DioException catch (error) {
+      final message = _serverError(error);
+      debugPrint('YouTube API error (${error.response?.statusCode}): $message');
+      throw Exception('فشل YouTube (${error.response?.statusCode ?? 'اتصال'}): $message');
+    }
   }
 }

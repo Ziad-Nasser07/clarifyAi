@@ -103,6 +103,14 @@ class LibraryDetailsScreen extends StatelessWidget {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
                 }
+                if (snapshot.hasError) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text('تعذر تحميل الجلسات المحفوظة: ${snapshot.error}', textAlign: TextAlign.center),
+                    ),
+                  );
+                }
                 final sessions = snapshot.data ?? [];
                 if (sessions.isEmpty) {
                   return const Center(

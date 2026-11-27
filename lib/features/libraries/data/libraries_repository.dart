@@ -8,49 +8,72 @@ class LibrariesRepository {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
-  String get _userId => _auth.currentUser!.uid;
-
   Future<void> createLibrary({
     required String subjectName,
     required int colorValue,
   }) async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      throw Exception('يجب تسجيل الدخول أولاً لإنشاء مكتبة.');
+    }
+
+    final now = DateTime.now();
     final library = SubjectLibraryModel(
       id: '',
       subjectName: subjectName,
       colorValue: colorValue,
-      createdAt: DateTime.now(),
+      createdAt: now,
     );
+
+    final map = library.toMap();
+    map['createdAt'] = Timestamp.fromDate(now);
 
     await _firestore
         .collection(ApiConstants.usersCollection)
-        .doc(_userId)
+        .doc(user.uid)
         .collection(ApiConstants.librariesCollection)
-        .add(library.toMap());
+        .add(map);
   }
 
   Stream<List<SubjectLibraryModel>> getUserLibraries() {
+    final user = _auth.currentUser;
+    if (user == null) {
+      return Stream.value(<SubjectLibraryModel>[]);
+    }
+
     return _firestore
         .collection(ApiConstants.usersCollection)
-        .doc(_userId)
+        .doc(user.uid)
         .collection(ApiConstants.librariesCollection)
-        .orderBy('createdAt', descending: true)
         .snapshots()
-        .map((snapshot) => snapshot.docs
-        .map((doc) => SubjectLibraryModel.fromFirestore(doc))
-        .toList());
+        .map((snapshot) {
+      final list = snapshot.docs
+          .map((doc) => SubjectLibraryModel.fromFirestore(doc))
+          .toList();
+      list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return list;
+    });
   }
 
   Stream<List<ExplanationSessionModel>> getLibrarySessions(String libraryId) {
+    final user = _auth.currentUser;
+    if (user == null) {
+      return Stream.value(<ExplanationSessionModel>[]);
+    }
+
     return _firestore
         .collection(ApiConstants.usersCollection)
-        .doc(_userId)
+        .doc(user.uid)
         .collection(ApiConstants.librariesCollection)
         .doc(libraryId)
         .collection(ApiConstants.sessionsCollection)
-        .orderBy('createdAt', descending: true)
         .snapshots()
-        .map((snapshot) => snapshot.docs
-        .map((doc) => ExplanationSessionModel.fromFirestore(doc))
-        .toList());
+        .map((snapshot) {
+      final list = snapshot.docs
+          .map((doc) => ExplanationSessionModel.fromFirestore(doc))
+          .toList();
+      list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return list;
+    });
   }
 }

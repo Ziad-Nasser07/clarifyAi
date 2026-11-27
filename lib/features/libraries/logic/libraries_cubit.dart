@@ -13,19 +13,24 @@ class LibrariesError extends LibrariesState {
 
 class LibrariesCubit extends Cubit<LibrariesState> {
   final LibrariesRepository _repository;
+  late final Stream<List<SubjectLibraryModel>> librariesStream;
 
-  LibrariesCubit(this._repository) : super(LibrariesInitial());
-
-  Stream<List<SubjectLibraryModel>> get librariesStream => _repository.getUserLibraries();
+  LibrariesCubit(this._repository) : super(LibrariesInitial()) {
+    librariesStream = _repository.getUserLibraries();
+  }
 
   Stream<List<ExplanationSessionModel>> sessionsStream(String libraryId) =>
       _repository.getLibrarySessions(libraryId);
 
   Future<void> addLibrary(String name, int colorValue) async {
     try {
-      await _repository.createLibrary(subjectName: name, colorValue: colorValue);
+      await _repository.createLibrary(
+        subjectName: name,
+        colorValue: colorValue,
+      );
     } catch (e) {
       emit(LibrariesError(e.toString()));
+      rethrow;
     }
   }
 }

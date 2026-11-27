@@ -18,35 +18,50 @@ class HomeLibrariesScreen extends StatefulWidget {
 class _HomeLibrariesScreenState extends State<HomeLibrariesScreen> {
   String _searchQuery = '';
 
-  void _showAddLibraryDialog(BuildContext context) {
+  void _showAddLibraryDialog(BuildContext screenContext) {
     final controller = TextEditingController();
     final colors = [0xFF4F46E5, 0xFF0D9488, 0xFFE11D48, 0xFFD97706, 0xFF7C3AED];
     int selectedColor = colors[0];
+    bool isSaving = false;
+
+    final librariesCubit = screenContext.read<LibrariesCubit>();
+    final messenger = ScaffoldMessenger.of(screenContext);
 
     showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
+      context: screenContext,
+      barrierDismissible: false,
+      builder: (dialogCtx) => StatefulBuilder(
+        builder: (builderCtx, setDialogState) => AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Text('New Subject Library', style: TextStyle(fontWeight: FontWeight.bold)),
+          title: const Text(
+            'New Subject Library',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               TextField(
                 controller: controller,
+                enabled: !isSaving,
+                textInputAction: TextInputAction.done,
                 decoration: const InputDecoration(
                   hintText: 'e.g., Logic, OOP, Computer Networks',
                 ),
               ),
               const SizedBox(height: 16),
-              const Text('Choose Accent Color:', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+              const Text(
+                'Choose Accent Color:',
+                style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
+              ),
               const SizedBox(height: 10),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: colors.map((c) {
                   return GestureDetector(
-                    onTap: () => setState(() => selectedColor = c),
+                    onTap: isSaving
+                        ? null
+                        : () => setDialogState(() => selectedColor = c),
                     child: CircleAvatar(
                       backgroundColor: Color(c),
                       radius: 18,
@@ -56,30 +71,75 @@ class _HomeLibrariesScreenState extends State<HomeLibrariesScreen> {
                     ),
                   );
                 }).toList(),
-              )
+              ),
             ],
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(ctx),
+              onPressed: isSaving
+                  ? null
+                  : () {
+                FocusScope.of(dialogCtx).unfocus();
+                Navigator.pop(dialogCtx);
+              },
               child: const Text('Cancel'),
             ),
             ElevatedButton(
-              onPressed: () {
-                if (controller.text.trim().isNotEmpty) {
-                  context.read<LibrariesCubit>().addLibrary(
-                    controller.text.trim(),
+              onPressed: isSaving
+                  ? null
+                  : () async {
+                final name = controller.text.trim();
+                if (name.isEmpty) return;
+
+                FocusScope.of(dialogCtx).unfocus();
+                setDialogState(() => isSaving = true);
+
+                try {
+                  await librariesCubit.addLibrary(
+                    name,
                     selectedColor,
                   );
-                  Navigator.pop(ctx);
+
+                  if (dialogCtx.mounted) {
+                    Navigator.pop(dialogCtx);
+                  }
+
+                  messenger.showSnackBar(
+                    const SnackBar(
+                      content: Text('Library created successfully!'),
+                    ),
+                  );
+                } catch (e) {
+                  if (dialogCtx.mounted) {
+                    setDialogState(() => isSaving = false);
+                  }
+
+                  messenger.showSnackBar(
+                    SnackBar(
+                      content: Text('Failed to create library: $e'),
+                    ),
+                  );
                 }
               },
-              child: const Text('Create'),
+              child: isSaving
+                  ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              )
+                  : const Text('Create'),
             ),
           ],
         ),
       ),
-    );
+    ).whenComplete(() {
+      Future.delayed(const Duration(milliseconds: 300), () {
+        controller.dispose();
+      });
+    });
   }
 
   @override
@@ -91,7 +151,10 @@ class _HomeLibrariesScreenState extends State<HomeLibrariesScreen> {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Welcome back, $userName', style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+            Text(
+              'Welcome back, $userName',
+              style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary),
+            ),
             const Text('My Study Libraries'),
           ],
         ),
@@ -128,9 +191,21 @@ class _HomeLibrariesScreenState extends State<HomeLibrariesScreen> {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
                 }
+                if (snapshot.hasError) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(
+                        'تعذر تحميل المكتبات: ${snapshot.error}',
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  );
+                }
                 final allLibraries = snapshot.data ?? [];
                 final libraries = allLibraries
-                    .where((lib) => lib.subjectName.toLowerCase().contains(_searchQuery))
+                    .where((lib) =>
+                    lib.subjectName.toLowerCase().contains(_searchQuery))
                     .toList();
 
                 if (libraries.isEmpty) {
@@ -138,7 +213,11 @@ class _HomeLibrariesScreenState extends State<HomeLibrariesScreen> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.folder_open_rounded, size: 64, color: Colors.grey.shade400),
+                        Icon(
+                          Icons.folder_open_rounded,
+                          size: 64,
+                          color: Colors.grey.shade400,
+                        ),
                         const SizedBox(height: 12),
                         const Text(
                           'No study libraries found.\nTap "+ New Subject" to organize your courses!',
@@ -191,7 +270,9 @@ class _HomeLibrariesScreenState extends State<HomeLibrariesScreen> {
                               height: 10,
                               decoration: BoxDecoration(
                                 color: accentColor,
-                                borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                                borderRadius: const BorderRadius.vertical(
+                                  top: Radius.circular(20),
+                                ),
                               ),
                             ),
                             Expanded(
@@ -199,7 +280,8 @@ class _HomeLibrariesScreenState extends State<HomeLibrariesScreen> {
                                 padding: const EdgeInsets.all(16),
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  mainAxisAlignment:
+                                  MainAxisAlignment.spaceBetween,
                                   children: [
                                     Container(
                                       padding: const EdgeInsets.all(10),
@@ -207,10 +289,15 @@ class _HomeLibrariesScreenState extends State<HomeLibrariesScreen> {
                                         color: accentColor.withValues(alpha: 0.12),
                                         borderRadius: BorderRadius.circular(12),
                                       ),
-                                      child: Icon(Icons.menu_book_rounded, color: accentColor, size: 26),
+                                      child: Icon(
+                                        Icons.menu_book_rounded,
+                                        color: accentColor,
+                                        size: 26,
+                                      ),
                                     ),
                                     Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      crossAxisAlignment:
+                                      CrossAxisAlignment.start,
                                       children: [
                                         Text(
                                           lib.subjectName,
@@ -225,7 +312,10 @@ class _HomeLibrariesScreenState extends State<HomeLibrariesScreen> {
                                         const SizedBox(height: 4),
                                         const Text(
                                           'Tap to open workspace',
-                                          style: TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: AppTheme.textSecondary,
+                                          ),
                                         ),
                                       ],
                                     ),
