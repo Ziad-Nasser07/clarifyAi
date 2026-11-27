@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:dio/dio.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -19,10 +18,8 @@ class AiTutorRepository {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
-  // Keep the fallback list short and use current general-purpose multimodal models.
   static const List<String> _geminiModels = [
     'gemini-3.8-flash',
-    'gemini-3.5-flash-lite',
   ];
 
   AiTutorRepository(this._dio);
@@ -38,6 +35,57 @@ class AiTutorRepository {
     }
     if (data is String && data.isNotEmpty) return data;
     return error.message ?? 'تعذر الاتصال بالخادم';
+  }
+
+  String _sanitizeMathText(String text) {
+    return text
+        .replaceAll(r'$$', '')
+        .replaceAll(r'$', '')
+        .replaceAllMapped(RegExp(r'\\text\{([^}]*)\}'), (m) => m.group(1) ?? '')
+        .replaceAllMapped(RegExp(r'\\overline\{([^}]*)\}'), (m) => m.group(1) ?? '')
+        .replaceAllMapped(RegExp(r'\\sqrt\{([^}]*)\}'), (m) => '√(${m.group(1) ?? ''})')
+        .replaceAllMapped(RegExp(r'\\frac\{([^}]*)\}\{([^}]*)\}'), (m) => '(${m.group(1)} ÷ ${m.group(2)})')
+        .replaceAll(r'\triangle', '△')
+        .replaceAll(r'\angle', '∠')
+        .replaceAll(r'^\circ', '°')
+        .replaceAll(r'\circ', '°')
+        .replaceAll(r'\times', '×')
+        .replaceAll(r'\div', '÷')
+        .replaceAll(r'\approx', '≈')
+        .replaceAll(r'\neq', '≠')
+        .replaceAll(r'\leq', '≤')
+        .replaceAll(r'\geq', '≥');
+  }
+
+  String _extractCleanTitle(String explanation, String? userNote, String language) {
+    final lines = explanation
+        .split('\n')
+        .map((line) => line.replaceAll(RegExp(r'^[#*>\-\s]+'), '').replaceAll('**', '').trim())
+        .where((line) => line.isNotEmpty)
+        .toList();
+
+    final greetingPattern = RegExp(
+      r'^(أهلاً|مرحباً|بصفتي|سأقوم|بالطبع|hello|hi\b|welcome|sure|here is)',
+      caseSensitive: false,
+    );
+
+    String candidate = '';
+    for (final line in lines) {
+      if (!greetingPattern.hasMatch(line) && line.length >= 3) {
+        candidate = line;
+        break;
+      }
+    }
+
+    if (candidate.isEmpty && userNote != null && userNote.trim().isNotEmpty) {
+      candidate = userNote.trim().split('\n').first.trim();
+    }
+
+    if (candidate.isEmpty) {
+      return language == 'ar' ? 'شرح وحل محتوى علمي' : 'Academic Explanation & Solution';
+    }
+
+    return candidate.length > 55 ? '${candidate.substring(0, 55)}…' : candidate;
   }
 
   Stream<String> _readGroqStream({
@@ -56,12 +104,12 @@ class AiTutorRepository {
 
     final messageContent = isVision
         ? [
-            {'type': 'text', 'text': prompt},
-            {
-              'type': 'image_url',
-              'image_url': {'url': 'data:$imageMimeType;base64,$imageBase64'},
-            },
-          ]
+      {'type': 'text', 'text': prompt},
+      {
+        'type': 'image_url',
+        'image_url': {'url': 'data:$imageMimeType;base64,$imageBase64'},
+      },
+    ]
         : prompt;
 
     final model = isVision ? ApiConstants.groqVisionModel : ApiConstants.groqTextModel;
@@ -72,8 +120,9 @@ class AiTutorRepository {
         ApiConstants.groqChatUrl,
         options: Options(
           responseType: ResponseType.stream,
-          sendTimeout: const Duration(seconds: 30),
-          receiveTimeout: const Duration(seconds: 120),
+          connectTimeout: const Duration(seconds: 10),
+          sendTimeout: const Duration(seconds: 25),
+          receiveTimeout: const Duration(seconds: 90),
           headers: {
             'Authorization': 'Bearer $key',
             'Content-Type': 'application/json',
@@ -82,6 +131,7 @@ class AiTutorRepository {
         data: {
           'model': model,
           'stream': true,
+          'temperature': 0.3,
           'messages': [
             {'role': 'user', 'content': messageContent},
           ],
@@ -136,7 +186,6 @@ class AiTutorRepository {
       throw Exception('أدخل نصًا أو اختر صورة أو ملف PDF أولاً.');
     }
 
-    // The language selected by the user is authoritative; text detection must not override it.
     final language = preferredLanguage == 'ar' ? 'ar' : 'en';
     final note = userText?.trim();
     final prompt = AppStrings.buildExplainPrompt(language, note);
@@ -151,12 +200,10 @@ class AiTutorRepository {
       }
       final bytes = await FileHelper.fileToBytes(file);
       if (bytes.isEmpty) throw Exception('الملف المحدد فارغ.');
-      // Avoid sending very large payloads that are likely to be rejected or exhaust memory.
       if (bytes.length > 18 * 1024 * 1024) {
         throw Exception('حجم الملف أكبر من 18 MB. قلّل حجمه ثم حاول مرة أخرى.');
       }
       base64Data = base64Encode(bytes);
-      debugPrint('ClarifyAI attachment size: ${(bytes.length / 1024).toStringAsFixed(1)} KB');
     }
 
     final geminiKey = (dotenv.env['GEMINI_API_KEY'] ?? '').trim();
@@ -167,100 +214,107 @@ class AiTutorRepository {
       for (final model in _geminiModels) {
         try {
           debugPrint('ClarifyAI trying Gemini model: $model');
-          final parts = <Map<String, dynamic>>[
-            {'text': prompt},
-          ];
-          if (base64Data != null && mimeType != null) {
-            parts.add({
-              'inlineData': {'mimeType': mimeType, 'data': base64Data},
-            });
-          }
+          final List parts = [
+    {'text': prompt},
+    ];
+    if (base64Data != null && mimeType != null) {
+    parts.add({
+    'inlineData': {'mimeType': mimeType, 'data': base64Data},
+    });
+    }
 
-          final body = <String, dynamic>{
-            'contents': [
-              {'role': 'user', 'parts': parts},
-            ],
-          };
-          if (model.startsWith('gemini-3')) {
-            body['generationConfig'] = {
-              'thinkingConfig': {'thinkingLevel': 'LOW'},
-            };
-          }
+    final body = <String, dynamic>{
+    'contents': [
+    {'role': 'user', 'parts': parts},
+    ],
+    'generationConfig': {
+    'temperature': 0.3,
+    if (model.startsWith('gemini-3'))
+    'thinkingConfig': {'thinkingLevel': 'LOW'},
+    },
+    };
 
-          final response = await _dio.post(
-            '${ApiConstants.geminiBaseUrl}/$model:streamGenerateContent?alt=sse',
-            options: Options(
-              responseType: ResponseType.stream,
-              sendTimeout: const Duration(seconds: 30),
-              receiveTimeout: const Duration(seconds: 120),
-              headers: {
-                'x-goog-api-key': geminiKey,
-                'Content-Type': 'application/json',
-              },
-            ),
-            data: body,
-          );
+    final response = await _dio.post(
+    '${ApiConstants.geminiBaseUrl}/$model:streamGenerateContent?alt=sse',
+    options: Options(
+    responseType: ResponseType.stream,
+    connectTimeout: const Duration(seconds: 6),
+    sendTimeout: const Duration(seconds: 15),
+    receiveTimeout: const Duration(seconds: 45),
+    headers: {
+    'x-goog-api-key': geminiKey,
+    'Content-Type': 'application/json',
+    },
+    ),
+    data: body,
+    );
 
-          final stream = (response.data as ResponseBody).stream;
-          final lines = stream
-              .cast<List<int>>()
-              .transform(utf8.decoder)
-              .transform(const LineSplitter());
-          await for (final line in lines) {
-            final trimmed = line.trim();
-            if (!trimmed.startsWith('data:')) continue;
-            final payload = trimmed.substring(5).trim();
-            if (payload.isEmpty || payload == '[DONE]') continue;
-            try {
-              final decoded = jsonDecode(payload);
-              if (decoded is! Map<String, dynamic>) continue;
-              final candidates = decoded['candidates'] as List? ?? const [];
-              if (candidates.isEmpty || candidates.first is! Map) continue;
-              final content = candidates.first['content'];
-              final responseParts = content is Map ? content['parts'] as List? ?? const [] : const [];
-              for (final part in responseParts) {
-                if (part is Map && part['text'] is String) {
-                  buffer.write(part['text'] as String);
-                }
-              }
-              if (buffer.isNotEmpty) {
-                final fullText = buffer.toString();
-                final keywordIndex = fullText.lastIndexOf('KEYWORDS:');
-                yield keywordIndex >= 0 ? fullText.substring(0, keywordIndex).trim() : fullText;
-              }
-            } on FormatException catch (error) {
-              debugPrint('Skipping incomplete Gemini SSE event: $error');
-            }
-          }
-          if (buffer.isNotEmpty) break;
-          geminiFailure = Exception('أعاد Gemini استجابة فارغة.');
-        } catch (error) {
-          geminiFailure = error;
-          buffer.clear();
-          debugPrint('Gemini model $model failed: $error');
-        }
-      }
+    final stream = (response.data as ResponseBody).stream;
+    final lines = stream
+        .cast<List<int>>()
+        .transform(utf8.decoder)
+        .transform(const LineSplitter());
+    await for (final line in lines) {
+    final trimmed = line.trim();
+    if (!trimmed.startsWith('data:')) continue;
+    final payload = trimmed.substring(5).trim();
+    if (payload.isEmpty || payload == '[DONE]') continue;
+    try {
+    final decoded = jsonDecode(payload);
+    if (decoded is! Map<String, dynamic>) continue;
+    final candidates = decoded['candidates'] as List? ?? const [];
+    if (candidates.isEmpty || candidates.first is! Map) continue;
+    final content = candidates.first['content'];
+    final responseParts = content is Map ? content['parts'] as List? ?? const [] : const [];
+    for (final part in responseParts) {
+    if (part is Map && part['text'] is String) {
+    buffer.write(part['text'] as String);
+    }
+    }
+    if (buffer.isNotEmpty) {
+    final fullText = buffer.toString();
+    final keywordIndex = fullText.lastIndexOf('KEYWORDS:');
+    final visibleText = keywordIndex >= 0
+    ? fullText.substring(0, keywordIndex).trim()
+        : fullText;
+    yield _sanitizeMathText(visibleText);
+    }
+    } on FormatException catch (error) {
+    debugPrint('Skipping incomplete Gemini SSE event: $error');
+    }
+    }
+    if (buffer.isNotEmpty) break;
+    geminiFailure = Exception('أعاد Gemini استجابة فارغة.');
+    } catch (error) {
+    geminiFailure = error;
+    buffer.clear();
+    debugPrint('Gemini model $model failed quickly: $error');
+    }
+    }
     } else {
-      geminiFailure = Exception('مفتاح Gemini غير مضبوط.');
+    geminiFailure = Exception('مفتاح Gemini غير مضبوط.');
     }
 
     if (buffer.isEmpty) {
-      final isImage = mimeType != null && mimeType.startsWith('image/');
-      if (mimeType == 'application/pdf') {
-        throw Exception('تعذرت معالجة ملف PDF عبر Gemini، ولا يدعم مسار Groq الاحتياطي ملفات PDF مباشرة. تحقق من مفتاح Gemini أو جرّب لاحقًا. التفاصيل: $geminiFailure');
-      }
-      await for (final groqText in _readGroqStream(
-        prompt: prompt,
-        imageFile: isImage ? file : null,
-        imageMimeType: isImage ? mimeType : null,
-        imageBase64: isImage ? base64Data : null,
-      )) {
-        buffer
-          ..clear()
-          ..write(groqText);
-        final keywordIndex = groqText.lastIndexOf('KEYWORDS:');
-        yield keywordIndex >= 0 ? groqText.substring(0, keywordIndex).trim() : groqText;
-      }
+    final isImage = mimeType != null && mimeType.startsWith('image/');
+    if (mimeType == 'application/pdf') {
+    throw Exception('تعذرت معالجة ملف PDF عبر Gemini، ولا يدعم مسار Groq الاحتياطي ملفات PDF مباشرة. التفاصيل: $geminiFailure');
+    }
+    await for (final groqText in _readGroqStream(
+    prompt: prompt,
+    imageFile: isImage ? file : null,
+    imageMimeType: isImage ? mimeType : null,
+    imageBase64: isImage ? base64Data : null,
+    )) {
+    buffer
+    ..clear()
+    ..write(groqText);
+    final keywordIndex = groqText.lastIndexOf('KEYWORDS:');
+    final visibleText = keywordIndex >= 0
+    ? groqText.substring(0, keywordIndex).trim()
+        : groqText;
+    yield _sanitizeMathText(visibleText);
+    }
     }
 
     final rawText = buffer.toString().trim();
@@ -270,28 +324,28 @@ class AiTutorRepository {
     final keywords = <String>[];
     final keywordIndex = rawText.lastIndexOf('KEYWORDS:');
     if (keywordIndex >= 0) {
-      explanation = rawText.substring(0, keywordIndex).trim();
-      keywords.addAll(
-        rawText.substring(keywordIndex + 'KEYWORDS:'.length)
-            .split(RegExp(r'[,،\n]'))
-            .map((value) => value.trim())
-            .where((value) => value.isNotEmpty)
-            .take(5),
-      );
+    explanation = rawText.substring(0, keywordIndex).trim();
+    keywords.addAll(
+    rawText.substring(keywordIndex + 'KEYWORDS:'.length)
+        .split(RegExp(r'[,،\n]'))
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty)
+        .take(5),
+    );
     }
 
-    final firstLine = explanation.split('\n').first.replaceAll('#', '').trim();
-    final title = firstLine.length > 55 ? '${firstLine.substring(0, 55)}…' : firstLine;
+    explanation = _sanitizeMathText(explanation);
+    final title = _extractCleanTitle(explanation, note, language);
     final session = ExplanationSessionModel(
-      id: '',
-      type: 'explanation',
-      title: title.isEmpty ? 'شرح محتوى علمي' : title,
-      inputText: note?.isNotEmpty == true ? note! : (file == null ? '' : 'محتوى مرفق (صورة / PDF)'),
-      attachmentUrl: null,
-      aiResponse: explanation,
-      language: language,
-      keywords: keywords,
-      createdAt: DateTime.now(),
+    id: '',
+    type: 'explanation',
+    title: title,
+    inputText: note?.isNotEmpty == true ? note! : (file == null ? '' : 'محتوى مرفق (صورة / PDF)'),
+    attachmentUrl: null,
+    aiResponse: explanation,
+    language: language,
+    keywords: keywords,
+    createdAt: DateTime.now(),
     );
 
     final docRef = await _firestore
@@ -303,15 +357,15 @@ class AiTutorRepository {
         .add(session.toMap());
 
     onCompleted(ExplanationSessionModel(
-      id: docRef.id,
-      type: session.type,
-      title: session.title,
-      inputText: session.inputText,
-      attachmentUrl: session.attachmentUrl,
-      aiResponse: session.aiResponse,
-      language: session.language,
-      keywords: session.keywords,
-      createdAt: session.createdAt,
+    id: docRef.id,
+    type: session.type,
+    title: session.title,
+    inputText: session.inputText,
+    attachmentUrl: session.attachmentUrl,
+    aiResponse: session.aiResponse,
+    language: session.language,
+    keywords: session.keywords,
+    createdAt: session.createdAt,
     ));
   }
 
@@ -347,7 +401,7 @@ class AiTutorRepository {
       if (data is! Map) throw Exception('استجابة YouTube غير مفهومة.');
       final items = data['items'] as List? ?? const [];
       final videos = items
-          .whereType<Map>()
+          .whereType()
           .map((item) => YoutubeVideoModel.fromYoutubeApi(Map<String, dynamic>.from(item)))
           .where((video) => video.videoId.isNotEmpty)
           .take(3)
