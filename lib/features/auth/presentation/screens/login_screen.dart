@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../logic/auth_cubit.dart';
 import '../../../libraries/presentation/screens/home_libraries_screen.dart';
+import 'register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -15,8 +16,13 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
-  final _nameController = TextEditingController();
-  bool _isRegister = false;
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -24,20 +30,24 @@ class _LoginScreenState extends State<LoginScreen> {
       body: BlocConsumer<AuthCubit, AuthState>(
         listener: (context, state) {
           if (state is AuthSuccess) {
-            Navigator.pushReplacement(
+            Navigator.pushAndRemoveUntil(
               context,
               MaterialPageRoute(builder: (_) => const HomeLibrariesScreen()),
+                  (route) => false,
             );
           } else if (state is AuthFailure) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(state.message),
                 backgroundColor: Colors.redAccent,
+                behavior: SnackBarBehavior.floating,
               ),
             );
           }
         },
         builder: (context, state) {
+          final isLoading = state is AuthLoading;
+
           return SafeArea(
             child: Center(
               child: SingleChildScrollView(
@@ -90,18 +100,9 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       child: Column(
                         children: [
-                          if (_isRegister) ...[
-                            TextField(
-                              controller: _nameController,
-                              decoration: const InputDecoration(
-                                labelText: 'Full Name',
-                                prefixIcon: Icon(Icons.person_outline),
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                          ],
                           TextField(
                             controller: _emailController,
+                            keyboardType: TextInputType.emailAddress,
                             decoration: const InputDecoration(
                               labelText: 'Email Address',
                               prefixIcon: Icon(Icons.email_outlined),
@@ -121,48 +122,70 @@ class _LoginScreenState extends State<LoginScreen> {
                             width: double.infinity,
                             height: 52,
                             child: ElevatedButton(
-                              onPressed: state is AuthLoading
+                              onPressed: isLoading
                                   ? null
                                   : () {
-                                      if (_isRegister) {
-                                        context.read<AuthCubit>().register(
-                                          _nameController.text,
-                                          _emailController.text,
-                                          _passwordController.text,
-                                        );
-                                        Future.delayed(
-                                          Duration(seconds: 4),
-                                          () {
-                                            Navigator.pushReplacement(
-                                              context,
-                                              MaterialPageRoute(
-                                                builder: (context) =>
-                                                    HomeLibrariesScreen(),
-                                              ),
-                                            );
-                                          },
-                                        );
-                                      } else {
-                                        context.read<AuthCubit>().login(
-                                          _emailController.text,
-                                          _passwordController.text,
-                                        );
-                                      }
-                                    },
-                              child: state is AuthLoading
+                                context.read<AuthCubit>().login(
+                                  _emailController.text,
+                                  _passwordController.text,
+                                );
+                              },
+                              child: isLoading
                                   ? const SizedBox(
-                                      height: 22,
-                                      width: 22,
-                                      child: CircularProgressIndicator(
-                                        color: Colors.white,
-                                        strokeWidth: 2.5,
-                                      ),
-                                    )
-                                  : Text(
-                                      _isRegister
-                                          ? 'Create Account'
-                                          : 'Sign In',
-                                    ),
+                                height: 22,
+                                width: 22,
+                                child: CircularProgressIndicator(
+                                  color: Colors.white,
+                                  strokeWidth: 2.5,
+                                ),
+                              )
+                                  : const Text('Sign In'),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          Row(
+                            children: [
+                              Expanded(child: Divider(color: AppTheme.border)),
+                              const Padding(
+                                padding: EdgeInsets.symmetric(horizontal: 12),
+                                child: Text(
+                                  'OR',
+                                  style: TextStyle(
+                                    color: AppTheme.textSecondary,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                              Expanded(child: Divider(color: AppTheme.border)),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          SizedBox(
+                            width: double.infinity,
+                            height: 50,
+                            child: OutlinedButton.icon(
+                              onPressed: isLoading
+                                  ? null
+                                  : () => context
+                                  .read<AuthCubit>()
+                                  .loginWithGoogle(),
+                              style: OutlinedButton.styleFrom(
+                                side: BorderSide(color: AppTheme.border),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                backgroundColor: Colors.white,
+                              ),
+                              icon: const GoogleLogoIcon(),
+                              label: const Text(
+                                'Continue with Google',
+                                style: TextStyle(
+                                  color: Colors.black87,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 15,
+                                ),
+                              ),
                             ),
                           ),
                         ],
@@ -170,13 +193,19 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 16),
                     TextButton(
-                      onPressed: () =>
-                          setState(() => _isRegister = !_isRegister),
-                      child: Text(
-                        _isRegister
-                            ? 'Already have an account? Sign In'
-                            : 'New to ClarifyAI? Create an Account',
-                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      onPressed: isLoading
+                          ? null
+                          : () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const RegisterScreen(),
+                          ),
+                        );
+                      },
+                      child: const Text(
+                        'New to ClarifyAI? Create an Account',
+                        style: TextStyle(fontWeight: FontWeight.w600),
                       ),
                     ),
                   ],
@@ -185,6 +214,32 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           );
         },
+      ),
+    );
+  }
+}
+
+class GoogleLogoIcon extends StatelessWidget {
+  const GoogleLogoIcon({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 24,
+      height: 24,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: const Text(
+        'G',
+        style: TextStyle(
+          fontSize: 15,
+          fontWeight: FontWeight.w800,
+          color: Color(0xFF4285F4),
+        ),
       ),
     );
   }

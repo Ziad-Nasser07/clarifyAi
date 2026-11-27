@@ -12,7 +12,20 @@
           "package_name": "com.example.clarifyai"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "821317195682-la2akm92bkdh6pht2oipo2piiqvhpg8f.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.clarifyai",
+            "certificate_hash": "fb099dd828e957527e8daec845e5fd25469c86be"
+          }
+        },
+        {
+          "client_id": "821317195682-gjig0vk6e5bfldhv2l65dp0er057381t.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyC6px7jZGUid6MwFYNb9XlMuoLD3PkRSow"
@@ -20,7 +33,19 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "821317195682-gjig0vk6e5bfldhv2l65dp0er057381t.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "821317195682-jqup4ki93e3bbvbohcpq3svopbcfgnfb.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.clarifyai"
+              }
+            }
+          ]
         }
       }
     }

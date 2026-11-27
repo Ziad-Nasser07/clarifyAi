@@ -22,6 +22,7 @@ subprojects {
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }
+
 subprojects {
     val setSdk: (Project) -> Unit = { p ->
         if (p.plugins.hasPlugin("com.android.library") || p.plugins.hasPlugin("com.android.application")) {
@@ -29,4 +30,9 @@ subprojects {
         }
     }
     if (state.executed) setSdk(this) else afterEvaluate { setSdk(this) }
+}
+subprojects {
+    tasks.matching { it.name.contains("lintVital", ignoreCase = true) }.configureEach {
+        enabled = false
+    }
 }

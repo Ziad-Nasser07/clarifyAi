@@ -107,6 +107,7 @@ class _HomeLibrariesScreenState extends State<HomeLibrariesScreen> {
                   messenger.showSnackBar(
                     const SnackBar(
                       content: Text('Library created successfully!'),
+                      behavior: SnackBarBehavior.floating,
                     ),
                   );
                 } catch (e) {
@@ -115,8 +116,10 @@ class _HomeLibrariesScreenState extends State<HomeLibrariesScreen> {
                   }
 
                   messenger.showSnackBar(
-                    SnackBar(
-                      content: Text('Failed to create library: $e'),
+                    const SnackBar(
+                      content: Text('Failed to create library. Please try again.'),
+                      backgroundColor: Colors.redAccent,
+                      behavior: SnackBarBehavior.floating,
                     ),
                   );
                 }
@@ -140,6 +143,86 @@ class _HomeLibrariesScreenState extends State<HomeLibrariesScreen> {
         controller.dispose();
       });
     });
+  }
+
+  void _showDeleteLibraryDialog(
+      BuildContext screenContext,
+      SubjectLibraryModel library,
+      ) {
+    bool isDeleting = false;
+    final librariesCubit = screenContext.read<LibrariesCubit>();
+    final messenger = ScaffoldMessenger.of(screenContext);
+
+    showDialog(
+      context: screenContext,
+      barrierDismissible: false,
+      builder: (dialogCtx) => StatefulBuilder(
+        builder: (builderCtx, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Text(
+            'Delete Library',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+          content: Text(
+            'Are you sure you want to delete "${library.subjectName}" and all its saved study sessions? This action cannot be undone.',
+            style: const TextStyle(color: AppTheme.textSecondary, height: 1.4),
+          ),
+          actions: [
+            TextButton(
+              onPressed: isDeleting ? null : () => Navigator.pop(dialogCtx),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.redAccent,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: isDeleting
+                  ? null
+                  : () async {
+                setDialogState(() => isDeleting = true);
+                try {
+                  await librariesCubit.deleteLibrary(library.id);
+
+                  if (dialogCtx.mounted) {
+                    Navigator.pop(dialogCtx);
+                  }
+
+                  messenger.showSnackBar(
+                    SnackBar(
+                      content: Text('"${library.subjectName}" deleted.'),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                } catch (e) {
+                  if (dialogCtx.mounted) {
+                    setDialogState(() => isDeleting = false);
+                  }
+
+                  messenger.showSnackBar(
+                    const SnackBar(
+                      content: Text('Failed to delete library. Please try again.'),
+                      backgroundColor: Colors.redAccent,
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                }
+              },
+              child: isDeleting
+                  ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              )
+                  : const Text('Delete'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -192,11 +275,11 @@ class _HomeLibrariesScreenState extends State<HomeLibrariesScreen> {
                   return const Center(child: CircularProgressIndicator());
                 }
                 if (snapshot.hasError) {
-                  return Center(
+                  return const Center(
                     child: Padding(
-                      padding: const EdgeInsets.all(24),
+                      padding: EdgeInsets.all(24),
                       child: Text(
-                        'تعذر تحميل المكتبات: ${snapshot.error}',
+                        'Unable to load libraries. Please check your connection and try again.',
                         textAlign: TextAlign.center,
                       ),
                     ),
@@ -283,17 +366,43 @@ class _HomeLibrariesScreenState extends State<HomeLibrariesScreen> {
                                   mainAxisAlignment:
                                   MainAxisAlignment.spaceBetween,
                                   children: [
-                                    Container(
-                                      padding: const EdgeInsets.all(10),
-                                      decoration: BoxDecoration(
-                                        color: accentColor.withValues(alpha: 0.12),
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      child: Icon(
-                                        Icons.menu_book_rounded,
-                                        color: accentColor,
-                                        size: 26,
-                                      ),
+                                    Row(
+                                      mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                      crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.all(10),
+                                          decoration: BoxDecoration(
+                                            color: accentColor.withValues(
+                                                alpha: 0.12),
+                                            borderRadius:
+                                            BorderRadius.circular(12),
+                                          ),
+                                          child: Icon(
+                                            Icons.menu_book_rounded,
+                                            color: accentColor,
+                                            size: 26,
+                                          ),
+                                        ),
+                                        InkWell(
+                                          borderRadius:
+                                          BorderRadius.circular(8),
+                                          onTap: () => _showDeleteLibraryDialog(
+                                            context,
+                                            lib,
+                                          ),
+                                          child: Padding(
+                                            padding: const EdgeInsets.all(4),
+                                            child: Icon(
+                                              Icons.delete_outline_rounded,
+                                              color: Colors.grey.shade500,
+                                              size: 20,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                     Column(
                                       crossAxisAlignment:

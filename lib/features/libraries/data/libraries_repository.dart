@@ -14,7 +14,7 @@ class LibrariesRepository {
   }) async {
     final user = _auth.currentUser;
     if (user == null) {
-      throw Exception('يجب تسجيل الدخول أولاً لإنشاء مكتبة.');
+      throw Exception('You must be signed in to create a library.');
     }
 
     final now = DateTime.now();
@@ -33,6 +33,31 @@ class LibrariesRepository {
         .doc(user.uid)
         .collection(ApiConstants.librariesCollection)
         .add(map);
+  }
+
+  Future<void> deleteLibrary(String libraryId) async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      throw Exception('You must be signed in to delete a library.');
+    }
+
+    final libraryRef = _firestore
+        .collection(ApiConstants.usersCollection)
+        .doc(user.uid)
+        .collection(ApiConstants.librariesCollection)
+        .doc(libraryId);
+
+    final sessionsSnapshot = await libraryRef
+        .collection(ApiConstants.sessionsCollection)
+        .get();
+
+    final batch = _firestore.batch();
+    for (final doc in sessionsSnapshot.docs) {
+      batch.delete(doc.reference);
+    }
+    batch.delete(libraryRef);
+
+    await batch.commit();
   }
 
   Stream<List<SubjectLibraryModel>> getUserLibraries() {

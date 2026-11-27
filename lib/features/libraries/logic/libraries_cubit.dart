@@ -33,4 +33,13 @@ class LibrariesCubit extends Cubit<LibrariesState> {
       rethrow;
     }
   }
+
+  Future<void> deleteLibrary(String libraryId) async {
+    try {
+      await _repository.deleteLibrary(libraryId);
+    } catch (e) {
+      emit(LibrariesError(e.toString()));
+      rethrow;
+    }
+  }
 }
